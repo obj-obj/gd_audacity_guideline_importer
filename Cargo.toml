@@ -1,0 +1,23 @@
+[package]
+name = "gd_audacity_guideline_importer"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+strip = true
+lto = true
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+constcat = "0.5"
+dirs = "5"
+fancy-regex = "0.14"
+
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+
+[dependencies.flate2]
+version = "1"
+features = ["zlib"]
