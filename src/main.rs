@@ -6,7 +6,7 @@ use core::{panic, str};
 use fancy_regex::{Match, Regex};
 use flate2::{read::ZlibDecoder, Decompress};
 use std::{
-	io::{Read, Write},
+	io::{stdin, stdout, Read, Write},
 	path::PathBuf,
 };
 
@@ -17,7 +17,6 @@ fn decode_level_data(data: &str) -> Result<String> {
 		ZlibDecoder::new_with_decompress(decoded, Decompress::new_with_window_bits(false, 15));
 	let mut decompressed = String::new();
 	decompressor.read_to_string(&mut decompressed)?;
-
 	Ok(decompressed)
 }
 
@@ -61,16 +60,16 @@ fn main() -> Result<()> {
 	let cli = Cli::parse();
 
 	let home_dir = dirs::home_dir().unwrap();
-	let windows_location = home_dir.join(WINDOWS_PATH);
-	let linux_location = home_dir.join(LINUX_PATH);
-	let ccl_location;
-	if windows_location.is_file() {
-		ccl_location = windows_location;
-	} else if linux_location.is_file() {
-		ccl_location = linux_location;
-	} else {
-		panic!("Could not find CCLocalLevels.dat");
-	}
+	#[rustfmt::skip]
+	// TODO better way to do this
+	let ccl_location = {
+		#[cfg(target_os = "linux")]
+		{ home_dir.join(LINUX_PATH) }
+		#[cfg(target_os = "windows")]
+		{ home_dir.join(WINDOWS_PATH) }
+		#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+		{ compile_error!("Only Linux and Windows is supported") }
+	};
 
 	let mut ccll_raw = std::fs::read(&ccl_location)?;
 	let encoded = ccll_raw[0] == 67;
@@ -80,7 +79,7 @@ fn main() -> Result<()> {
 	let ccll_data = str::from_utf8(&ccll_raw)?.trim_end_matches('\0');
 
 	let mut cc_local_levels = if encoded {
-		decode_level_data(&ccll_data)?
+		decode_level_data(ccll_data)?
 	} else {
 		ccll_data.to_string()
 	};
@@ -93,19 +92,20 @@ fn main() -> Result<()> {
 		&cc_local_levels,
 	)?;
 
-	let level_name = cli.level_name.as_ref().map(|i| i.as_str());
+	let level_name = if let Some(level_name) = cli.level_name {
+		level_name
+	} else {
+		list_levels(&level_names);
+		print!("Select a level #: ");
+		stdout().flush()?;
+		let mut input = String::new();
+		stdin().read_line(&mut input)?;
+		input
+	};
 	let level_index = level_names
 		.iter()
-		.position(|i| Some(i.as_str()) == level_name)
-		.unwrap_or_else(|| {
-			list_levels(&level_names);
-			print!("Select a level #: ");
-			std::io::stdout().flush().unwrap();
-			let mut input = String::new();
-			std::io::stdin().read_line(&mut input).unwrap();
-			let index: usize = input.trim().parse().unwrap();
-			index
-		});
+		.position(|i| i.as_str() == level_name)
+		.expect("Invalid level name");
 
 	let level_data_match = regex_to_vec(
 		Regex::new("(?<=<k>k4</k><s>)[^<>]+(?=</s>)")?,
@@ -125,11 +125,11 @@ fn main() -> Result<()> {
 	let mut labels: Vec<(f64, &str)> = vec![];
 	for line in labels_data.lines() {
 		// TODO actually handle invalid input
-		if line == "" {
+		if line.is_empty() {
 			continue;
 		}
 		let last = line.chars().last().unwrap();
-		let time = line.splitn(2, '\t').next().unwrap();
+		let time = line.split('\t').next().unwrap();
 
 		labels.push((
 			time.parse()?,
