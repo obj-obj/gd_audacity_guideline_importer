@@ -75,6 +75,7 @@ const LINUX_PATH: &str = concat!(
 	".steam/steam/steamapps/compatdata/322170/pfx/drive_c/users/steamuser/",
 	WINDOWS_PATH
 );
+
 fn main() -> Result<()> {
 	let cli = Cli::parse();
 
