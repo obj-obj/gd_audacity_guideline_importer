@@ -1,14 +1,32 @@
 use anyhow::Result;
 use base64::prelude::{Engine, BASE64_URL_SAFE};
 use clap::Parser;
+use compact_str::{format_compact, CompactString};
 use constcat::concat;
 use core::{panic, str};
 use fancy_regex::{Match, Regex};
 use flate2::{read::ZlibDecoder, Decompress};
+use std::borrow::Cow;
 use std::{
 	io::{stdin, stdout, Read, Write},
 	path::PathBuf,
 };
+
+#[derive(Eq, PartialEq, Debug, Ord, PartialOrd)]
+enum LastDigit {
+	Yellow,
+	Green,
+	Orange,
+}
+
+//conversion to str
+fn convert_enum_to_str(last_digit: &LastDigit) -> &'static str {
+	match last_digit {
+		LastDigit::Yellow => "0.9",
+		LastDigit::Green => "1",
+		LastDigit::Orange => "0",
+	}
+}
 
 fn decode_level_data(data: &str) -> Result<String> {
 	// First 10 characters of the decoded file are always invalid, for some reason. Maybe metadata?
@@ -122,7 +140,7 @@ fn main() -> Result<()> {
 		.find(&level_data)?
 		.unwrap();
 
-	let mut labels: Vec<(f64, &str)> = vec![];
+	let mut labels: Vec<(f64, LastDigit)> = vec![];
 	for line in labels_data.lines() {
 		// TODO actually handle invalid input
 		if line.is_empty() {
@@ -134,9 +152,9 @@ fn main() -> Result<()> {
 		labels.push((
 			time.parse()?,
 			match last.to_digit(3).unwrap_or(0) {
-				0 => "0.9", // Yellow
-				1 => "1",   // Green
-				2 => "0",   // Orange
+				0 => LastDigit::Yellow, // Yellow
+				1 => LastDigit::Green,  // Green
+				2 => LastDigit::Orange, // Orange
 				_ => panic!("This shouldn't be possible"),
 			},
 		));
@@ -144,10 +162,11 @@ fn main() -> Result<()> {
 	// Is there a better way to do this?
 	labels.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-	let mut new_guidelines = String::new();
-	for label in labels {
-		new_guidelines += &format!("{}~{}~", label.0, label.1);
-	}
+	let new_guidelines = labels
+		.iter()
+		.map(|label| format_compact!("{}~{}~", label.0, convert_enum_to_str(&label.1)))
+		.collect::<Vec<CompactString>>()
+		.join("");
 
 	// TODO recompress save data with zlib so it doesn't take up extra disk space until the next time the game is launched
 	// Geometry Dash also seems to be doing some weird stuff when not given a precompressed save file (inserting null characters into the file, etc)
