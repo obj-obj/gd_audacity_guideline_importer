@@ -1,32 +1,17 @@
 use anyhow::Result;
 use base64::prelude::{Engine, BASE64_URL_SAFE};
 use clap::Parser;
-use compact_str::{format_compact, CompactString};
+use compact_str::format_compact;
 use constcat::concat;
 use core::{panic, str};
 use fancy_regex::{Match, Regex};
 use flate2::{read::ZlibDecoder, Decompress};
-use std::borrow::Cow;
+use sorted_vec::partial::SortedVec;
 use std::{
+	fs,
 	io::{stdin, stdout, Read, Write},
 	path::PathBuf,
 };
-
-#[derive(Eq, PartialEq, Debug, Ord, PartialOrd)]
-enum LastDigit {
-	Yellow,
-	Green,
-	Orange,
-}
-
-//conversion to str
-fn convert_enum_to_str(last_digit: &LastDigit) -> &'static str {
-	match last_digit {
-		LastDigit::Yellow => "0.9",
-		LastDigit::Green => "1",
-		LastDigit::Orange => "0",
-	}
-}
 
 fn decode_level_data(data: &str) -> Result<String> {
 	// First 10 characters of the decoded file are always invalid, for some reason. Maybe metadata?
@@ -68,12 +53,28 @@ struct Cli {
 	dry_run: bool,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum GuidelineColor {
+	Green,
+	Orange,
+	Yellow,
+}
+impl GuidelineColor {
+	/// Converts to the color value used in save data
+	fn value(&self) -> &'static str {
+		match self {
+			Self::Orange => "0",
+			Self::Yellow => "0.9",
+			Self::Green => "1",
+		}
+	}
+}
+
 const WINDOWS_PATH: &str = "AppData/Local/GeometryDash/CCLocalLevels.dat";
 const LINUX_PATH: &str = concat!(
 	".steam/steam/steamapps/compatdata/322170/pfx/drive_c/users/steamuser/",
 	WINDOWS_PATH
 );
-
 fn main() -> Result<()> {
 	let cli = Cli::parse();
 
@@ -89,7 +90,7 @@ fn main() -> Result<()> {
 		{ compile_error!("Only Linux and Windows is supported") }
 	};
 
-	let mut ccll_raw = std::fs::read(&ccl_location)?;
+	let mut ccll_raw = fs::read(&ccl_location)?;
 	let encoded = ccll_raw[0] == 67;
 	if encoded {
 		ccll_raw.iter_mut().for_each(|i| *i ^= 0xB);
@@ -140,7 +141,7 @@ fn main() -> Result<()> {
 		.find(&level_data)?
 		.unwrap();
 
-	let mut labels: Vec<(f64, LastDigit)> = vec![];
+	let mut labels: SortedVec<(f64, GuidelineColor)> = SortedVec::new();
 	for line in labels_data.lines() {
 		// TODO actually handle invalid input
 		if line.is_empty() {
@@ -149,24 +150,20 @@ fn main() -> Result<()> {
 		let last = line.chars().last().unwrap();
 		let time = line.split('\t').next().unwrap();
 
-		labels.push((
+		labels.insert((
 			time.parse()?,
 			match last.to_digit(3).unwrap_or(0) {
-				0 => LastDigit::Yellow, // Yellow
-				1 => LastDigit::Green,  // Green
-				2 => LastDigit::Orange, // Orange
+				0 => GuidelineColor::Yellow,
+				1 => GuidelineColor::Green,
+				2 => GuidelineColor::Orange,
 				_ => panic!("This shouldn't be possible"),
 			},
 		));
 	}
-	// Is there a better way to do this?
-	labels.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-	let new_guidelines = labels
-		.iter()
-		.map(|label| format_compact!("{:.6}~{}~", label.0, convert_enum_to_str(&label.1)))
-		.collect::<Vec<CompactString>>()
-		.join("");
+	let new_guidelines = labels.iter().fold(String::new(), |acc, label| {
+		acc + &format_compact!("{:.6}~{}~", label.0, label.1.value())
+	});
 
 	// TODO recompress save data with zlib so it doesn't take up extra disk space until the next time the game is launched
 	// Geometry Dash also seems to be doing some weird stuff when not given a precompressed save file (inserting null characters into the file, etc)
