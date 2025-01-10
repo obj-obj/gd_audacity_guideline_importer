@@ -164,7 +164,7 @@ fn main() -> Result<()> {
 
 	let new_guidelines = labels
 		.iter()
-		.map(|label| format_compact!("{}~{}~", label.0, convert_enum_to_str(&label.1)))
+		.map(|label| format_compact!("{:.6}~{}~", label.0, convert_enum_to_str(&label.1)))
 		.collect::<Vec<CompactString>>()
 		.join("");
 
