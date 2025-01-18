@@ -13,7 +13,7 @@ anyhow = "1"
 base64 = "0.22"
 compact_str = "0.8"
 constcat = "0.5"
-dirs = "5"
+dirs = "6"
 fancy-regex = "0.14"
 sorted-vec = "0.8"
 
