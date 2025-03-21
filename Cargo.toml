@@ -11,11 +11,10 @@ codegen-units = 1
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
-compact_str = "0.8"
+compact_str = "0.9"
 constcat = "0.6"
 dirs = "6"
 fancy-regex = "0.14"
-sorted-vec = "0.8"
 
 [dependencies.clap]
 version = "4"

@@ -6,7 +6,6 @@ use constcat::concat;
 use core::{panic, str};
 use fancy_regex::{Match, Regex};
 use flate2::{read::ZlibDecoder, Decompress};
-use sorted_vec::partial::SortedVec;
 use std::{
 	fs,
 	io::{stdin, stdout, Read, Write},
@@ -142,7 +141,7 @@ fn main() -> Result<()> {
 		.find(&level_data)?
 		.unwrap();
 
-	let mut labels: SortedVec<(f64, GuidelineColor)> = SortedVec::new();
+	let mut labels: Vec<(f64, GuidelineColor)> = Vec::new();
 	for line in labels_data.lines() {
 		// TODO actually handle invalid input
 		if line.is_empty() {
@@ -151,7 +150,7 @@ fn main() -> Result<()> {
 		let last = line.chars().last().unwrap();
 		let time = line.split('\t').next().unwrap();
 
-		labels.insert((
+		labels.push((
 			time.parse()?,
 			match last.to_digit(3).unwrap_or(0) {
 				0 => GuidelineColor::Yellow,
@@ -161,6 +160,8 @@ fn main() -> Result<()> {
 			},
 		));
 	}
+	// Is there a better way to do this?
+	labels.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
 	let new_guidelines = labels.iter().fold(String::new(), |acc, label| {
 		acc + &format_compact!("{:.6}~{}~", label.0, label.1.value())
