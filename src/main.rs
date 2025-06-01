@@ -6,7 +6,7 @@ use constcat::concat;
 use core::{panic, str};
 use fancy_regex::{Match, Regex};
 use flate2::{read::ZlibDecoder, Decompress};
-use ordered_float::OrderedFloat;
+use ordered_float::NotNan;
 use std::{
 	fs,
 	io::{stdin, stdout, Read, Write},
@@ -142,7 +142,7 @@ fn main() -> Result<()> {
 		.find(&level_data)?
 		.unwrap();
 
-	let mut labels: Vec<(OrderedFloat<f64>, GuidelineColor)> = Vec::new();
+	let mut labels: Vec<(NotNan<f64>, GuidelineColor)> = Vec::new();
 	for line in labels_data.lines() {
 		// TODO actually handle invalid input
 		if line.is_empty() {
