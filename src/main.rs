@@ -6,6 +6,7 @@ use constcat::concat;
 use core::{panic, str};
 use fancy_regex::{Match, Regex};
 use flate2::{read::ZlibDecoder, Decompress};
+use ordered_float::OrderedFloat;
 use std::{
 	fs,
 	io::{stdin, stdout, Read, Write},
@@ -141,7 +142,7 @@ fn main() -> Result<()> {
 		.find(&level_data)?
 		.unwrap();
 
-	let mut labels: Vec<(f64, GuidelineColor)> = Vec::new();
+	let mut labels: Vec<(OrderedFloat<f64>, GuidelineColor)> = Vec::new();
 	for line in labels_data.lines() {
 		// TODO actually handle invalid input
 		if line.is_empty() {
@@ -160,8 +161,7 @@ fn main() -> Result<()> {
 			},
 		));
 	}
-	// Is there a better way to do this?
-	labels.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+	labels.sort();
 
 	let new_guidelines = labels.iter().fold(String::new(), |acc, label| {
 		acc + &format_compact!("{:.6}~{}~", label.0, label.1.value())
