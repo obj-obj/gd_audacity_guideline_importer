@@ -1,0 +1,213 @@
+import { ScrollView } from "std-widgets.slint";
+
+component Button {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked;
+
+    Rectangle {
+        background: #424242eb;
+        border-color: ta.pressed ? #ffffff : (ta.has-hover || selected) ? #009dff : self.background.darker(50%);
+        animate border-color { duration: 150ms; }
+        border-radius: 16px;
+        border-width: 3px;
+        
+        ta := TouchArea {
+            clicked => {
+                root.clicked();
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-size: 16px;
+            font-weight: 600;
+        }
+    }
+
+    @children
+}
+
+component Title {
+    in property <string> text;
+    in property <length> window-height;
+
+    height: window-height / 25;
+
+    Text {
+        text: root.text;
+        font-size: 16px;
+        font-weight: 700;
+    }
+}
+
+export component MainWindow inherits Window {
+    default-font-family: "FreeSans";
+    default-font-size: 14px;
+    width: 700px;
+    height: 1000px;
+    title: "Geometry Dash Guideline Editor";
+    
+    
+
+    in-out property <string> saveFilePath;
+    in-out property <string> labelFilePath;
+    in-out property <string> selectedLevel;
+    in-out property <string> guidelinePreview;
+    in-out property <[string]> levelList;
+    callback open_save_file();
+    callback open_labels_file();
+    callback apply_guidelines(selectedLevel: string);
+
+    VerticalLayout {
+        spacing: 5px;
+        padding: 20px;
+
+        // Step 1: Load Files
+        Title {
+            window-height: root.height;
+            text: "Step 1: Load Files";
+        }
+
+        GridLayout {
+            spacing: 15px;
+            padding: 5px;
+            height: root.height / 4;
+
+            Text {
+                row: 0;
+                col: 0;
+                text: "Audacity Labels File Location (Labels.txt):";
+                font-size: 16px;
+                font-weight: 700;
+            }
+
+            Text {
+                font-family: "FreeMono";
+                row: 0;
+                col: 0;
+                font-size: 16px;
+                font-weight: 700;
+                text: "\n\n" + labelFilePath;
+                overflow: elide;
+            }
+
+            Button {
+                row: 0;
+                col: 2;
+                text: "Browse";
+                width: root.width / 2.5;
+                height: root.height / 12;
+
+                clicked => {
+                    open_labels_file();
+                }
+            }
+
+            Text {
+                row: 1;
+                col: 0;
+                text: "Save File Location (CCLevels.dat):";
+                font-size: 16px;
+                font-weight: 700;
+            }
+
+            Text {
+                row: 1;
+                col: 0;
+                font-size: 16px;
+                font-weight: 700;
+                font-family: "FreeMono";
+                text: "\n\n" + saveFilePath;
+                overflow: elide;
+            }
+
+            Button {
+                row: 1;
+                col: 2;
+                text: "Browse";
+                width: root.width / 2.5;
+                height: root.height / 12;
+
+                clicked => {
+                    open_save_file();
+                }
+            }
+        }
+
+        // Step 2: Select Level
+        Title {
+            text: "Step 2: Select Level";
+            window-height: root.height;
+        }
+
+        Rectangle {
+            height: root.height / 2.5;
+        
+            ScrollView {
+                VerticalLayout {
+                    // spacing: -3px;
+
+                    for level in levelList : Button {
+                        text: level;
+                        height: root.height / 12;
+                        selected: level == root.selectedLevel;
+    
+                        clicked => { selectedLevel = level; }
+                    }
+                }
+            }
+        }
+
+        // Step 3: Preview Guidelines
+        Rectangle {
+            // Spacer rectangle
+        }
+
+        Title {
+            text: "Step 3: Apply Guidelines";
+            window-height: root.height;
+        }
+
+        // Apply Guidelines Button
+        Button {
+            text: "Apply Guidelines (YOU SHOULD BACK UP YOUR FILES FIRST)";
+            height: root.height / 10;
+            
+            clicked => { apply_guidelines(selectedLevel) }
+        }
+    }
+}
+
+export component StatusMessage inherits Window {
+    in-out property <string> statusMessage;
+    callback close_window();
+
+    width: 500px;
+    height: 200px;
+
+    Text {
+        y: root.height / 4;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-family: "FreeSans";
+        font-size: 20px;
+        font-weight: 700;
+        text: statusMessage;
+    }
+
+    Button {
+        y: root.height / 2;
+        width: 200px;
+        height: 75px;
+        
+        
+        Text {
+            text: "OK";
+            font-family: "FreeSans";
+            font-size: 20px;
+        }
+
+        clicked => { close_window() }
+    }
+}

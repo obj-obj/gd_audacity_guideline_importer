@@ -16,6 +16,11 @@ constcat = "0.6"
 dirs = "6"
 fancy-regex = "0.14"
 ordered-float = "5"
+rfd = "0.15.3"
+slint = "1.12.1"
+
+[build-dependencies]
+slint-build = "1.12.1"
 
 [dependencies.clap]
 version = "4"

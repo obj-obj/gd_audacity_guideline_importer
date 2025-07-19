@@ -1,183 +1,116 @@
-use anyhow::Result;
-use base64::prelude::{Engine, BASE64_URL_SAFE};
-use clap::Parser;
-use compact_str::format_compact;
-use constcat::concat;
-use core::{panic, str};
-use fancy_regex::{Match, Regex};
-use flate2::{read::ZlibDecoder, Decompress};
-use ordered_float::NotNan;
-use std::{
-	fs,
-	io::{stdin, stdout, Read, Write},
-	path::PathBuf,
-};
+use gd_audacity_guideline_importer::*;
+use rfd::FileDialog;
+use slint::{SharedString, VecModel};
+use std::{cell::RefCell, error::Error, fs, path::PathBuf, rc::Rc};
 
-fn decode_level_data(data: &str) -> Result<String> {
-	// First 10 characters of the decoded file are always invalid, for some reason. Maybe metadata?
-	let decoded = &BASE64_URL_SAFE.decode(data)?[10..];
-	let mut decompressor =
-		ZlibDecoder::new_with_decompress(decoded, Decompress::new_with_window_bits(false, 15));
-	let mut decompressed = String::new();
-	decompressor.read_to_string(&mut decompressed)?;
-	Ok(decompressed)
-}
+slint::include_modules!();
 
-fn regex_to_vec(regex: Regex, data: &str) -> Result<Vec<Match>> {
-	let mut matches = vec![];
-	for capture_match in regex.captures_iter(data) {
-		for sub_capture_match in capture_match?.iter() {
-			matches.push(sub_capture_match.unwrap());
+fn main() -> Result<(), Box<dyn Error>> {
+	let ui = MainWindow::new()?;
+
+	let labels_file = Rc::new(RefCell::new(PathBuf::new()));
+	let save_file = Rc::new(RefCell::new(PathBuf::new()));
+
+	// Open Labels File
+	let labels_file_clone = Rc::clone(&labels_file);
+	let ui_weak = ui.as_weak();
+	ui.on_open_labels_file(move || {
+		if let Some(file) = open_labels_file() {
+			*labels_file_clone.borrow_mut() = file.clone();
+			if let Some(ui) = ui_weak.upgrade() {
+				ui.set_labelFilePath(file.to_string_lossy().to_string().into());
+			}
 		}
-	}
-	Ok(matches)
-}
-
-fn list_levels(level_names: &[Match]) {
-	println!("Level names:");
-	for (i, name) in level_names.iter().enumerate() {
-		println!("{i}: {}", name.as_str());
-	}
-}
-
-#[derive(Parser)]
-struct Cli {
-	/// Path to the Audacity labels file
-	#[arg(long)]
-	labels_file: PathBuf,
-	/// Optional level to modify. If unset, level name is asked for at runtime
-	#[arg(long)]
-	level_name: Option<String>,
-	/// Prints the modified save data instead of writing to CCLocalLevels.dat
-	#[arg(long)]
-	dry_run: bool,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum GuidelineColor {
-	Green,
-	Orange,
-	Yellow,
-}
-impl GuidelineColor {
-	/// Converts to the color value used in save data
-	fn value(&self) -> &'static str {
-		match self {
-			Self::Orange => "0",
-			Self::Yellow => "0.9",
-			Self::Green => "1",
-		}
-	}
-}
-
-const WINDOWS_PATH: &str = "AppData/Local/GeometryDash/CCLocalLevels.dat";
-const LINUX_PATH: &str = concat!(
-	".steam/steam/steamapps/compatdata/322170/pfx/drive_c/users/steamuser/",
-	WINDOWS_PATH
-);
-
-fn main() -> Result<()> {
-	let cli = Cli::parse();
-
-	let home_dir = dirs::home_dir().unwrap();
-	#[rustfmt::skip]
-	// TODO better way to do this
-	let ccl_location = {
-		#[cfg(target_os = "linux")]
-		{ home_dir.join(LINUX_PATH) }
-		#[cfg(target_os = "windows")]
-		{ home_dir.join(WINDOWS_PATH) }
-		#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-		{ compile_error!("Only Linux and Windows is supported") }
-	};
-
-	let mut ccll_raw = fs::read(&ccl_location)?;
-	let encoded = ccll_raw[0] == 67;
-	if encoded {
-		ccll_raw.iter_mut().for_each(|i| *i ^= 0xB);
-	}
-	let ccll_data = str::from_utf8(&ccll_raw)?.trim_end_matches('\0');
-
-	let mut cc_local_levels = if encoded {
-		decode_level_data(ccll_data)?
-	} else {
-		ccll_data.to_string()
-	};
-	let labels_data = std::fs::read_to_string(&cli.labels_file)?;
-
-	// Please forgive me for what I'm about to do
-	// TODO don't use fucking regex to parse XML
-	let level_names = regex_to_vec(
-		Regex::new("(?<=<s>)[^<>=]+(?=</s><k>k4</k>)")?,
-		&cc_local_levels,
-	)?;
-
-	let level_name = if let Some(level_name) = cli.level_name {
-		level_name
-	} else {
-		list_levels(&level_names);
-		print!("Select a level #: ");
-		stdout().flush()?;
-		let mut input = String::new();
-		stdin().read_line(&mut input)?;
-		input
-	};
-	let level_index = level_names
-		.iter()
-		.position(|i| i.as_str() == level_name)
-		.expect("Invalid level name");
-
-	let level_data_match = regex_to_vec(
-		Regex::new("(?<=<k>k4</k><s>)[^<>]+(?=</s>)")?,
-		&cc_local_levels,
-	)?[level_index];
-	let level_data_str = level_data_match.as_str();
-	let mut level_data = if level_data_str.contains('|') {
-		level_data_str.to_string()
-	} else {
-		decode_level_data(level_data_str)?
-	};
-
-	let guidelines_match = Regex::new("(?<=kA14,)[0-9.~]*")?
-		.find(&level_data)?
-		.unwrap();
-
-	let mut labels: Vec<(NotNan<f64>, GuidelineColor)> = Vec::new();
-	for line in labels_data.lines() {
-		// TODO actually handle invalid input
-		if line.is_empty() {
-			continue;
-		}
-		let last = line.chars().last().unwrap();
-		let time = line.split('\t').next().unwrap();
-
-		labels.push((
-			time.parse()?,
-			match last.to_digit(3).unwrap_or(0) {
-				0 => GuidelineColor::Yellow,
-				1 => GuidelineColor::Green,
-				2 => GuidelineColor::Orange,
-				_ => panic!("This shouldn't be possible"),
-			},
-		));
-	}
-	labels.sort();
-
-	let new_guidelines = labels.iter().fold(String::new(), |acc, label| {
-		acc + &format_compact!("{:.6}~{}~", label.0, label.1.value())
 	});
 
-	// TODO recompress save data with zlib so it doesn't take up extra disk space until the next time the game is launched
-	// Geometry Dash also seems to be doing some weird stuff when not given a precompressed save file (inserting null characters into the file, etc)
-	level_data.replace_range(guidelines_match.range(), &new_guidelines);
-	cc_local_levels.replace_range(level_data_match.range(), &level_data);
+	// Open Save File
+	let save_file_clone = Rc::clone(&save_file);
+	let ui_weak = ui.as_weak();
+	ui.on_open_save_file(move || {
+		if let Some(file) = open_save_file() {
+			*save_file_clone.borrow_mut() = file.clone();
+			if let Some(ui) = ui_weak.upgrade() {
+				ui.set_saveFilePath(file.to_string_lossy().to_string().into());
+			}
 
-	if cli.dry_run {
-		println!("---New guideline string---\n{new_guidelines}\n");
-		println!("---CCLocalLevels.dat---\n{cc_local_levels}");
-	} else {
-		std::fs::write(&ccl_location, &cc_local_levels)?;
-	}
+			if let Ok(level_names) = list_levels(&file) {
+				let shared_levels: Vec<SharedString> =
+					level_names.into_iter().map(SharedString::from).collect();
+				let model = Rc::new(VecModel::from(shared_levels));
+				if let Some(ui) = ui_weak.upgrade() {
+					ui.set_levelList(model.into());
+				}
+			}
+		}
+	});
 
+	// Apply Guidelines
+	let save_file_clone = save_file.clone();
+	let labels_file_clone = labels_file.clone();
+
+	ui.on_apply_guidelines(move |level_name| {
+		let save_path = save_file_clone.borrow().clone();
+		let labels_path = labels_file_clone.borrow().clone();
+
+		if save_path.exists() && labels_path.exists() {
+			match fs::read_to_string(&labels_path) {
+				Ok(labels_data) => {
+					match apply_guidelines_to_level(
+						&save_path,
+						&level_name.to_string(),
+						&labels_data,
+					) {
+						Ok(updated_data) => match fs::write(&save_path, updated_data) {
+							Ok(_) => {
+								show_status_message(String::from(
+									"Guidelines applied successfully",
+								));
+							}
+							Err(e) => {
+								show_status_message(format!("Error writing save file: {e}"));
+							}
+						},
+						Err(e) => {
+							show_status_message(format!("Error applying guidelines: {e}"));
+						}
+					}
+				}
+				Err(e) => {
+					show_status_message(format!("Error reading labels file: {e}"));
+				}
+			}
+		} else {
+			show_status_message(String::from("Missing save or labels file."));
+		}
+	});
+
+	ui.run()?;
 	Ok(())
+}
+
+fn open_save_file() -> Option<PathBuf> {
+	FileDialog::new()
+		.add_filter("Save files", &["dat"])
+		.pick_file()
+}
+
+fn open_labels_file() -> Option<PathBuf> {
+	FileDialog::new()
+		.add_filter("Labels file", &["txt"])
+		.pick_file()
+}
+
+fn show_status_message(message: String) {
+	let status_window = StatusMessage::new().unwrap();
+	status_window.set_statusMessage(message.into());
+
+	// Clone just for the close handler
+	let status_window_weak = status_window.as_weak();
+	status_window.on_close_window(move || {
+		if let Some(msg) = status_window_weak.upgrade() {
+			msg.hide().unwrap();
+		}
+	});
+
+	status_window.show().unwrap();
 }
