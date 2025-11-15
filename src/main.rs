@@ -7,11 +7,46 @@ use core::{panic, str};
 use fancy_regex::{Match, Regex};
 use flate2::{read::ZlibDecoder, Decompress};
 use ordered_float::NotNan;
+use rfd::FileDialog;
+use slint::{ModelRc, SharedString, ToSharedString, VecModel};
 use std::{
 	fs,
 	io::{stdin, stdout, Read, Write},
 	path::PathBuf,
+	rc::Rc,
+	sync::Mutex,
 };
+slint::include_modules!();
+
+#[derive(Parser)]
+struct Cli {
+	/// Path to the Audacity labels file
+	#[arg(long)]
+	labels_file: Option<PathBuf>,
+	/// Optional level to modify. If unset, level name is asked for at runtime
+	#[arg(long)]
+	level_name: Option<String>,
+	/// Prints the modified save data instead of writing to CCLocalLevels.dat
+	#[arg(long)]
+	dry_run: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum GuidelineColor {
+	Orange,
+	Yellow,
+	Green,
+}
+impl GuidelineColor {
+	/// Converts to the color value used in save data
+	fn value(&self) -> &str {
+		match self {
+			Self::Orange => "0",
+			Self::Yellow => "0.9",
+			Self::Green => "1",
+		}
+	}
+}
 
 fn decode_level_data(data: &str) -> Result<String> {
 	// First 10 characters of the decoded file are always invalid, for some reason. Maybe metadata?
@@ -40,36 +75,6 @@ fn list_levels(level_names: &[Match]) {
 	}
 }
 
-#[derive(Parser)]
-struct Cli {
-	/// Path to the Audacity labels file
-	#[arg(long)]
-	labels_file: PathBuf,
-	/// Optional level to modify. If unset, level name is asked for at runtime
-	#[arg(long)]
-	level_name: Option<String>,
-	/// Prints the modified save data instead of writing to CCLocalLevels.dat
-	#[arg(long)]
-	dry_run: bool,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum GuidelineColor {
-	Orange,
-	Yellow,
-	Green,
-}
-impl GuidelineColor {
-	/// Converts to the color value used in save data
-	fn value(&self) -> &str {
-		match self {
-			Self::Orange => "0",
-			Self::Yellow => "0.9",
-			Self::Green => "1",
-		}
-	}
-}
-
 const WINDOWS_PATH: &str = "AppData/Local/GeometryDash/CCLocalLevels.dat";
 const LINUX_PATH: &str = concat!(
 	".steam/steam/steamapps/compatdata/322170/pfx/drive_c/users/steamuser/",
@@ -82,7 +87,7 @@ fn main() -> Result<()> {
 	let home_dir = dirs::home_dir().unwrap();
 	#[rustfmt::skip]
 	// TODO better way to do this
-	let ccl_location = {
+	let save_file = {
 		#[cfg(target_os = "linux")]
 		{ home_dir.join(LINUX_PATH) }
 		#[cfg(target_os = "windows")]
@@ -91,26 +96,33 @@ fn main() -> Result<()> {
 		{ compile_error!("Only Linux and Windows is supported") }
 	};
 
-	let mut ccll_raw = fs::read(&ccl_location)?;
-	let encoded = ccll_raw[0] == 67;
+	let mut save_data = fs::read(&save_file)?;
+	let encoded = save_data[0] == 67;
 	if encoded {
-		ccll_raw.iter_mut().for_each(|i| *i ^= 0xB);
+		save_data.iter_mut().for_each(|i| *i ^= 0xB);
 	}
-	let ccll_data = str::from_utf8(&ccll_raw)?.trim_end_matches('\0');
-
-	let mut cc_local_levels = if encoded {
-		decode_level_data(ccll_data)?
+	// Sometimes the save data has null characters at the end for some reason
+	let save_data = str::from_utf8(&save_data)?.trim_end_matches('\0');
+	let mut save_data = if encoded {
+		decode_level_data(save_data)?
 	} else {
-		ccll_data.to_string()
+		save_data.to_string()
 	};
-	let labels_data = std::fs::read_to_string(&cli.labels_file)?;
 
-	// Please forgive me for what I'm about to do
-	// TODO don't use fucking regex to parse XML
-	let level_names = regex_to_vec(
-		Regex::new("(?<=<s>)[^<>=]+(?=</s><k>k4</k>)")?,
-		&cc_local_levels,
-	)?;
+	// TODO don't use regex to parse XML
+	let level_names = regex_to_vec(Regex::new("(?<=<s>)[^<>=]+(?=</s><k>k4</k>)")?, &save_data)?;
+
+	let labels_data = if let Some(labels_file) = &cli.labels_file {
+		std::fs::read_to_string(labels_file)?
+	} else {
+		let level_names = level_names
+			.iter()
+			.map(|i| SharedString::from(i.as_str()))
+			.collect();
+		return ui(save_file, save_data, level_names);
+	};
+
+	// Everything past this point is CLI
 
 	let level_index = if let Some(level_name) = cli.level_name {
 		level_names
@@ -130,22 +142,81 @@ fn main() -> Result<()> {
 		index
 	};
 
-	let level_data_match = regex_to_vec(
-		Regex::new("(?<=<k>k4</k><s>)[^<>]+(?=</s>)")?,
-		&cc_local_levels,
-	)?[level_index];
-	let level_data = level_data_match.as_str();
-	// If the level data contains a `|` character, it isn't encoded
-	let mut level_data = if level_data.contains('|') {
-		level_data.to_string()
+	let new_guidelines = create_guidelines(&labels_data);
+	modify_save_data(level_index, &new_guidelines, &mut save_data)?;
+
+	// TODO recompress save data with zlib so it doesn't take up extra disk space until the next time the game is launched
+	// Geometry Dash also seems to be doing some weird stuff when not given a precompressed save file (inserting null characters into the file, etc)
+
+	if cli.dry_run {
+		println!("---New guideline string---\n{new_guidelines}\n");
+		println!("---CCLocalLevels.dat---\n{save_data}");
 	} else {
-		decode_level_data(level_data)?
-	};
+		std::fs::write(save_file, save_data)?;
+	}
 
-	let guidelines_match = Regex::new("(?<=kA14,)[0-9.~]*")?
-		.find(&level_data)?
-		.unwrap();
+	Ok(())
+}
 
+fn ui(
+	save_file: PathBuf,
+	mut save_data: String,
+	level_names: VecModel<SharedString>,
+) -> Result<()> {
+	let ui_local = Rc::new(MainWindow::new()?);
+	let labels_file = Rc::new(Mutex::new(None));
+
+	ui_local.set_level_names(ModelRc::from(Rc::new(level_names)));
+
+	{
+		let ui = ui_local.clone();
+		let labels_file = labels_file.clone();
+		ui_local.on_choose_labels_file(move || {
+			let file = FileDialog::new().add_filter("Text", &["txt"]).pick_file();
+			ui.set_file_name(if let Some(file) = &file {
+				*labels_file.lock().unwrap() = Some(std::fs::read_to_string(file).unwrap());
+				format!(": {}", file.display()).to_shared_string()
+			} else {
+				"".to_shared_string()
+			});
+		});
+	}
+
+	let ui = ui_local.clone();
+	ui_local.on_apply_guidelines(move || {
+		let new_guidelines = if let Some(labels_data) = &*labels_file.lock().unwrap() {
+			create_guidelines(labels_data)
+		} else {
+			ui.set_status("Error: No labels file selected".to_shared_string());
+			return;
+		};
+
+		let level_index = ui.get_level_index();
+		let level_index = if level_index == -1 {
+			ui.set_status("Error: No level selected".to_shared_string());
+			return;
+		} else {
+			level_index as usize
+		};
+
+		if let Err(e) = modify_save_data(level_index, &new_guidelines, &mut save_data) {
+			ui.set_status(format!("Error adding guidelines: {e}").to_shared_string());
+			return;
+		}
+
+		if let Err(e) = std::fs::write(&save_file, &save_data) {
+			ui.set_status(format!("Error writing save data: {e}").to_shared_string());
+			return;
+		}
+
+		ui.set_status("Applied guidelines".to_shared_string());
+	});
+
+	ui_local.run()?;
+	Ok(())
+}
+
+fn create_guidelines(labels_data: &str) -> String {
 	let labels: Vec<(NotNan<f64>, GuidelineColor)> = labels_data
 		.lines()
 		.filter(|line| !line.is_empty())
@@ -163,21 +234,32 @@ fn main() -> Result<()> {
 		})
 		.collect();
 
-	let new_guidelines = labels.iter().fold(String::new(), |acc, label| {
+	labels.iter().fold(String::new(), |acc, label| {
 		acc + &format_compact!("{:.6}~{}~", label.0, label.1.value())
-	});
+	})
+}
 
-	// TODO recompress save data with zlib so it doesn't take up extra disk space until the next time the game is launched
-	// Geometry Dash also seems to be doing some weird stuff when not given a precompressed save file (inserting null characters into the file, etc)
-	level_data.replace_range(guidelines_match.range(), &new_guidelines);
-	cc_local_levels.replace_range(level_data_match.range(), &level_data);
-
-	if cli.dry_run {
-		println!("---New guideline string---\n{new_guidelines}\n");
-		println!("---CCLocalLevels.dat---\n{cc_local_levels}");
+fn modify_save_data(
+	level_index: usize,
+	new_guidelines: &str,
+	save_data: &mut String,
+) -> Result<()> {
+	let level_data_match =
+		regex_to_vec(Regex::new("(?<=<k>k4</k><s>)[^<>]+(?=</s>)")?, save_data)?[level_index];
+	let level_data = level_data_match.as_str();
+	// If the level data contains a `|` character, it isn't encoded
+	let mut level_data = if level_data.contains('|') {
+		level_data.to_string()
 	} else {
-		std::fs::write(&ccl_location, &cc_local_levels)?;
-	}
+		decode_level_data(level_data)?
+	};
+
+	let guidelines_match = Regex::new("(?<=kA14,)[0-9.~]*")?
+		.find(&level_data)?
+		.unwrap();
+
+	level_data.replace_range(guidelines_match.range(), new_guidelines);
+	save_data.replace_range(level_data_match.range(), &level_data);
 
 	Ok(())
 }

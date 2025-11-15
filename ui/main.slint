@@ -1,0 +1,46 @@
+import { ComboBox, Button } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+	title: "GD Audacity Guideline Importer";
+	min-width: 500px;
+
+	in property <string> file_name;
+	in property <[string]> level_names;
+	out property <int> level_index;
+	in property <string> status;
+
+	callback choose_labels_file();
+	callback apply_guidelines();
+
+	VerticalLayout {
+		alignment: start;
+
+		Button {
+			text: "Choose labels file" + file_name;
+			clicked => { choose_labels_file() };
+		}
+
+		Text {
+			text: "Select level:";
+		}
+
+		ComboBox {
+			model: level_names;
+			current-index <=> level_index;
+		}
+
+		Button {
+			text: "Apply guidelines";
+			clicked => { apply_guidelines() };
+		}
+
+		Text {
+			text: status;
+		}
+
+		Text {
+			text: "MAKE SURE TO HAVE A BACKUP OF YOUR SAVE FILE!";
+			font-size: 20pt;
+		}
+	}
+}

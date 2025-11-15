@@ -16,6 +16,8 @@ constcat = "0.6"
 dirs = "6"
 fancy-regex = "0.16"
 ordered-float = "5"
+slint = "1"
+rfd = "0.15"
 
 [dependencies.clap]
 version = "4"
@@ -24,3 +26,6 @@ features = ["derive"]
 [dependencies.flate2]
 version = "1"
 features = ["zlib"]
+
+[build-dependencies]
+slint-build = "1"
