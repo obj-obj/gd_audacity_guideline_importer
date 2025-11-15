@@ -14,7 +14,7 @@ base64 = "0.22"
 compact_str = "0.9"
 constcat = "0.6"
 dirs = "6"
-fancy-regex = "0.14"
+fancy-regex = "0.16"
 ordered-float = "5"
 
 [dependencies.clap]

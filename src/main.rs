@@ -23,7 +23,7 @@ fn decode_level_data(data: &str) -> Result<String> {
 	Ok(decompressed)
 }
 
-fn regex_to_vec(regex: Regex, data: &str) -> Result<Vec<Match>> {
+fn regex_to_vec(regex: Regex, data: &str) -> Result<Vec<Match<'_>>> {
 	let mut matches = vec![];
 	for capture_match in regex.captures_iter(data) {
 		for sub_capture_match in capture_match?.iter() {
@@ -55,13 +55,13 @@ struct Cli {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum GuidelineColor {
-	Green,
 	Orange,
 	Yellow,
+	Green,
 }
 impl GuidelineColor {
 	/// Converts to the color value used in save data
-	fn value(&self) -> &'static str {
+	fn value(&self) -> &str {
 		match self {
 			Self::Orange => "0",
 			Self::Yellow => "0.9",
@@ -112,56 +112,56 @@ fn main() -> Result<()> {
 		&cc_local_levels,
 	)?;
 
-	let level_name = if let Some(level_name) = cli.level_name {
-		level_name
+	let level_index = if let Some(level_name) = cli.level_name {
+		level_names
+			.iter()
+			.position(|i| i.as_str() == level_name)
+			.expect("Invalid level name")
 	} else {
 		list_levels(&level_names);
 		print!("Select a level #: ");
 		stdout().flush()?;
 		let mut input = String::new();
 		stdin().read_line(&mut input)?;
-		input
+		let index = input.trim().parse()?;
+		if level_names.get(index).is_none() {
+			panic!("Invalid level #");
+		}
+		index
 	};
-	let level_index = level_names
-		.iter()
-		.position(|i| i.as_str() == level_name)
-		.expect("Invalid level name");
 
 	let level_data_match = regex_to_vec(
 		Regex::new("(?<=<k>k4</k><s>)[^<>]+(?=</s>)")?,
 		&cc_local_levels,
 	)?[level_index];
-	let level_data_str = level_data_match.as_str();
-	let mut level_data = if level_data_str.contains('|') {
-		level_data_str.to_string()
+	let level_data = level_data_match.as_str();
+	// If the level data contains a `|` character, it isn't encoded
+	let mut level_data = if level_data.contains('|') {
+		level_data.to_string()
 	} else {
-		decode_level_data(level_data_str)?
+		decode_level_data(level_data)?
 	};
 
 	let guidelines_match = Regex::new("(?<=kA14,)[0-9.~]*")?
 		.find(&level_data)?
 		.unwrap();
 
-	let mut labels: Vec<(NotNan<f64>, GuidelineColor)> = Vec::new();
-	for line in labels_data.lines() {
-		// TODO actually handle invalid input
-		if line.is_empty() {
-			continue;
-		}
-		let last = line.chars().last().unwrap();
-		let time = line.split('\t').next().unwrap();
-
-		labels.push((
-			time.parse()?,
-			match last.to_digit(3).unwrap_or(0) {
+	let labels: Vec<(NotNan<f64>, GuidelineColor)> = labels_data
+		.lines()
+		.filter(|line| !line.is_empty())
+		.map(|line| {
+			// So all possible label names (or a missing one) resolve to a valid color
+			let color = match line.chars().last().unwrap().to_digit(3).unwrap_or(0) {
 				0 => GuidelineColor::Yellow,
 				1 => GuidelineColor::Green,
 				2 => GuidelineColor::Orange,
-				_ => panic!("This shouldn't be possible"),
-			},
-		));
-	}
-	labels.sort();
+				_ => std::unreachable!(), // Radix is 3 so value will never be above 2
+			};
+			// The time is always followed by a tab
+			let time = line.split('\t').next().unwrap();
+			(time.parse().unwrap(), color)
+		})
+		.collect();
 
 	let new_guidelines = labels.iter().fold(String::new(), |acc, label| {
 		acc + &format_compact!("{:.6}~{}~", label.0, label.1.value())
