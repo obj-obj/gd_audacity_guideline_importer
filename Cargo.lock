@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "gd_audacity_guideline_importer"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64",
