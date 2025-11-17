@@ -10,11 +10,11 @@ use ordered_float::NotNan;
 use rfd::FileDialog;
 use slint::{ModelRc, SharedString, ToSharedString, VecModel};
 use std::{
+	cell::RefCell,
 	fs,
 	io::{stdin, stdout, Read, Write},
 	path::PathBuf,
 	rc::Rc,
-	sync::Mutex,
 };
 slint::include_modules!();
 
@@ -164,7 +164,7 @@ fn ui(
 	level_names: VecModel<SharedString>,
 ) -> Result<()> {
 	let ui_local = Rc::new(MainWindow::new()?);
-	let labels_file = Rc::new(Mutex::new(None));
+	let labels_file = Box::leak(Box::new(RefCell::new(None)));
 
 	ui_local.set_level_names(ModelRc::from(Rc::new(level_names)));
 
@@ -174,7 +174,7 @@ fn ui(
 		ui_local.on_choose_labels_file(move || {
 			let file = FileDialog::new().add_filter("Text", &["txt"]).pick_file();
 			ui.set_file_name(if let Some(file) = &file {
-				*labels_file.lock().unwrap() = Some(std::fs::read_to_string(file).unwrap());
+				labels_file.replace(Some(std::fs::read_to_string(file).unwrap()));
 				format!(": {}", file.display()).to_shared_string()
 			} else {
 				"".to_shared_string()
@@ -184,7 +184,7 @@ fn ui(
 
 	let ui = ui_local.clone();
 	ui_local.on_apply_guidelines(move || {
-		let new_guidelines = if let Some(labels_data) = &*labels_file.lock().unwrap() {
+		let new_guidelines = if let Some(labels_data) = &*labels_file.borrow() {
 			create_guidelines(labels_data)
 		} else {
 			ui.set_status("Error: No labels file selected".to_shared_string());
