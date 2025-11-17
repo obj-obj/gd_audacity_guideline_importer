@@ -163,27 +163,28 @@ fn ui(
 	mut save_data: String,
 	level_names: VecModel<SharedString>,
 ) -> Result<()> {
-	let ui_local = Rc::new(MainWindow::new()?);
-	let labels_file = Box::leak(Box::new(RefCell::new(None)));
-
-	ui_local.set_level_names(ModelRc::from(Rc::new(level_names)));
-
-	{
-		let ui = ui_local.clone();
-		let labels_file = labels_file.clone();
-		ui_local.on_choose_labels_file(move || {
-			let file = FileDialog::new().add_filter("Text", &["txt"]).pick_file();
-			ui.set_file_name(if let Some(file) = &file {
-				labels_file.replace(Some(std::fs::read_to_string(file).unwrap()));
-				format!(": {}", file.display()).to_shared_string()
-			} else {
-				"".to_shared_string()
-			});
-		});
+	// I love leaking memory
+	#[inline]
+	fn leak<T>(value: T) -> &'static T {
+		Box::leak(Box::new(value))
 	}
 
-	let ui = ui_local.clone();
-	ui_local.on_apply_guidelines(move || {
+	let ui = leak(MainWindow::new()?);
+	let labels_file = leak(RefCell::new(None));
+
+	ui.set_level_names(ModelRc::from(Rc::new(level_names)));
+
+	ui.on_choose_labels_file(|| {
+		let file = FileDialog::new().add_filter("Text", &["txt"]).pick_file();
+		ui.set_file_name(if let Some(file) = &file {
+			labels_file.replace(Some(std::fs::read_to_string(file).unwrap()));
+			format!(": {}", file.display()).to_shared_string()
+		} else {
+			"".to_shared_string()
+		});
+	});
+
+	ui.on_apply_guidelines(move || {
 		let new_guidelines = if let Some(labels_data) = &*labels_file.borrow() {
 			create_guidelines(labels_data)
 		} else {
@@ -212,7 +213,7 @@ fn ui(
 		ui.set_status("Applied guidelines".to_shared_string());
 	});
 
-	ui_local.run()?;
+	ui.run()?;
 	Ok(())
 }
 
